@@ -5,6 +5,7 @@ import subprocess
 import shlex
 import textwrap
 import threading
+import os
 
 class NetCat:
 
@@ -36,7 +37,7 @@ class NetCat:
                 response = ''
 
                 while recv_len < 4096:
-                    data = self.recv(4096)
+                    data = self.socket.recv(4096)
                     recv_len = len(data)
                     response += data.decode()
                     if recv_len < 4096:
@@ -72,7 +73,7 @@ class NetCat:
         if self.args.execute:
 
             output = execute(self.args.execute)
-            client_socket.send(output.encode())
+            client_socket.send(output)
 
         elif self.args.upload:
 
@@ -100,10 +101,26 @@ class NetCat:
                     client_socket.send(b'Command:#>')
                     while '\n' not in cmd_buffer.decode():
                         cmd_buffer += client_socket.recv(64)
-                    response = execute(cmd_buffer.decode())
-                    if response:
-                        client_socket.send(response.encode())
-                    cmd_buffer = b''
+                    
+                    command = cmd_buffer.decode().strip()
+                    if command.startswith('cd '):
+                        path = command[3:].strip()
+                        
+                        try:
+
+                            os.chdir(path)
+                            current_dir = os.getcwd()
+                            client_socket.send(f"Changed directory to {current_dir}\n".encode())
+                            cmd_buffer = b''
+
+
+                        except FileNotFoundError as e:
+                            client_socket.send(f'Directory not found:{path}\n'.encode())
+                    else:
+                        response = execute(cmd_buffer.decode())
+                        if response:
+                            client_socket.send(response)
+                            cmd_buffer = b''
 
                 except Exception as e:
                     print(f'server killed {e}')
@@ -113,13 +130,21 @@ class NetCat:
                     
 
 def execute(cmd):
+    cmd = cmd.strip()
+    if not cmd:
+        return b''
 
-    cmd = cmd.strip() # remove spaces
-    if cmd:
-        output = subprocess.check_output(shlex.split(cmd),stderr=subprocess.STDOUT)
-        output.decode()
-    
-    return output
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=False 
+        )
+        return result.stdout + result.stderr
+
+    except Exception as e:
+        return f"Error executing command: {str(e)}\n".encode()
 
 if __name__ == '__main__':
 
